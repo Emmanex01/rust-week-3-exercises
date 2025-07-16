@@ -70,23 +70,28 @@ impl CompactSize {
         let prefix = bytes[0];
 
         match prefix {
-            0x00..=0xfc => Ok((Self{value: prefix as u64}, 1)),
+            0x00..=0xfc => Ok((
+                Self {
+                    value: prefix as u64,
+                },
+                1,
+            )),
             0xfd => {
                 // Check if we have at least 2 bytes for u16
                 if bytes.len() < 3 {
                     return Err(BitcoinError::InsufficientBytes);
                 }
                 let value = u16::from_le_bytes(bytes[1..3].try_into().unwrap()) as u64;
-                Ok((Self{value}, 3))
+                Ok((Self { value }, 3))
             }
-            
+
             0xfe => {
                 // Check if we have at least 4 bytes for u32
                 if bytes.len() < 5 {
                     return Err(BitcoinError::InsufficientBytes);
                 }
                 let value = u32::from_le_bytes(bytes[1..5].try_into().unwrap()) as u64;
-                Ok((Self{value}, 5))
+                Ok((Self { value }, 5))
             }
 
             0xff => {
@@ -95,10 +100,9 @@ impl CompactSize {
                     return Err(BitcoinError::InsufficientBytes);
                 }
                 let value = u64::from_le_bytes(bytes[1..9].try_into().unwrap());
-                Ok((Self{value}, 9))
+                Ok((Self { value }, 9))
             }
         }
-        
     }
 }
 
@@ -111,7 +115,7 @@ impl Serialize for Txid {
         S: serde::Serializer,
     {
         let hex_string = hex::encode(self.0);
-        
+
         // TODO: Serialize as a hex-encoded string (32 bytes => 64 hex characters)
         serializer.serialize_str(&hex_string)
     }
@@ -165,7 +169,7 @@ impl OutPoint {
         }
         let mut txid_bytes = [0u8; 32];
         txid_bytes.copy_from_slice(&bytes[0..32]);
-        
+
         let vout = u32::from_le_bytes(bytes[32..36].try_into().unwrap());
         Ok((OutPoint::new(txid_bytes, vout), 36))
         // Return error if insufficient bytes
@@ -208,8 +212,8 @@ impl Script {
         let (size, size_len) = CompactSize::from_bytes(bytes)?;
         let size_value = size.value as usize;
         if bytes.len() < size_len + size_value {
-            return Err(BitcoinError::InsufficientBytes);  
-    }
+            return Err(BitcoinError::InsufficientBytes);
+        }
         let script_bytes = bytes[size_len..size_len + size_value].to_vec();
         Ok((Script::new(script_bytes), size_len + size_value))
     }
@@ -267,9 +271,16 @@ impl TransactionInput {
         let sequence_offset = offset + script_offset;
         if bytes.len() < sequence_offset + 4 {
             return Err(BitcoinError::InsufficientBytes);
-    }
-        let sequence = u32::from_le_bytes(bytes[sequence_offset..sequence_offset + 4].try_into().unwrap());
-        Ok((TransactionInput::new(previous_output, script_sig, sequence), sequence_offset + 4))
+        }
+        let sequence = u32::from_le_bytes(
+            bytes[sequence_offset..sequence_offset + 4]
+                .try_into()
+                .unwrap(),
+        );
+        Ok((
+            TransactionInput::new(previous_output, script_sig, sequence),
+            sequence_offset + 4,
+        ))
     }
 }
 
@@ -300,12 +311,11 @@ impl BitcoinTransaction {
         bytes.extend_from_slice(&self.version.to_le_bytes());
         bytes.extend_from_slice(&CompactSize::new(self.inputs.len() as u64).to_bytes());
         for input in &self.inputs {
-            bytes.extend_from_slice(&input.to_bytes());     
-    }  
+            bytes.extend_from_slice(&input.to_bytes());
+        }
         bytes.extend_from_slice(&self.lock_time.to_le_bytes());
         bytes
-    }   
-
+    }
 
     pub fn from_bytes(bytes: &[u8]) -> Result<(Self, usize), BitcoinError> {
         // TODO: Read version, CompactSize for input count
@@ -317,44 +327,63 @@ impl BitcoinTransaction {
         let version = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
         let (input_count, input_count_len) = CompactSize::from_bytes(&bytes[4..])?;
         let input_count_value = input_count.value as usize;
-        let mut offset = 4 + input_count_len;   
+        let mut offset = 4 + input_count_len;
         let mut inputs = Vec::with_capacity(input_count_value);
         for _ in 0..input_count_value {
             let (input, input_len) = TransactionInput::from_bytes(&bytes[offset..])?;
             inputs.push(input);
-            offset += input_len;    
-    }
+            offset += input_len;
+        }
         if bytes.len() < offset + 4 {
             return Err(BitcoinError::InsufficientBytes);
         }
         let lock_time = u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap());
-        Ok((BitcoinTransaction::new(version, inputs, lock_time), offset + 4))   
+        Ok((
+            BitcoinTransaction::new(version, inputs, lock_time),
+            offset + 4,
+        ))
+    }
 }
 
-}
-
-    impl fmt::Display for BitcoinTransaction {
+impl fmt::Display for BitcoinTransaction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Use writeln! for a nicely formatted, multi-line output.
         writeln!(f, "Version: {}", self.version)?;
-        
+
         writeln!(f, "Inputs ({}):", self.inputs.len())?;
         for (i, input) in self.inputs.iter().enumerate() {
             // Reverse txid for standard big-endian display
             let mut reversed_txid = input.previous_output.txid.0;
             reversed_txid.reverse();
-            let txid_hex = reversed_txid.iter().map(|b| format!("{:02x}", b)).collect::<String>();
-            
+            let txid_hex = reversed_txid
+                .iter()
+                .map(|b| format!("{:02x}", b))
+                .collect::<String>();
+
             writeln!(f, "  Input {}:", i)?;
             writeln!(f, "    Previous Output Txid: {}", txid_hex)?;
             // This line directly addresses the failing assertion
-            writeln!(f, "    Previous Output Vout: {}", input.previous_output.vout)?;
-            
-            let script_hex = input.script_sig.bytes.iter().map(|b| format!("{:02x}", b)).collect::<String>();
-            writeln!(f, "    Script Sig ({} bytes): {}", input.script_sig.bytes.len(), script_hex)?;
+            writeln!(
+                f,
+                "    Previous Output Vout: {}",
+                input.previous_output.vout
+            )?;
+
+            let script_hex = input
+                .script_sig
+                .bytes
+                .iter()
+                .map(|b| format!("{:02x}", b))
+                .collect::<String>();
+            writeln!(
+                f,
+                "    Script Sig ({} bytes): {}",
+                input.script_sig.bytes.len(),
+                script_hex
+            )?;
             writeln!(f, "    Sequence: {:#010x}", input.sequence)?; // E.g., 0xFFFFFFFF
         }
-        
+
         // This line addresses the other failing assertion
         write!(f, "Lock Time: {}", self.lock_time)
     }
